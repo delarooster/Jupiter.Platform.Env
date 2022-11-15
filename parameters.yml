@@ -1,0 +1,70 @@
+variables:
+- group: 'Standard Terraform Variables'
+- group: 'Common Resource IDs'
+
+## global non-prod variables
+- name: backend
+  value: $(non_production_backend)
+- name: filecreds
+  value: ""
+- name: environment
+  value: non_production
+- name: my_release_env
+  value: ""
+- name: postScriptServicePrincipal
+  value: "" 
+- name: rt_id_env
+  value: nonprdrt
+- name: sp_cred
+  value: $(non_production_sp_cred)
+- name: vnet_env
+  value: nonprdvnet
+- name: vnet_rg_env
+  value: nonprdvnetrg
+- name: vw_domjoin_env
+  value: vw_domjoin_cred
+- name: subscriptionId
+  value: ""
+
+- ${{ if startsWith(variables['Build.SourceBranch'], 'refs/heads/sandbox') }}:
+  - name: Jupiter_ID
+    value: 1234
+  
+- ${{ if startsWith(variables['Build.SourceBranch'], 'refs/heads/develop') }}:
+  - name: Jupiter_ID
+    value: 4567
+
+- ${{ if startsWith(variables['Build.SourceBranch'], 'refs/heads/test') }}:
+  - name: Jupiter_ID
+    value: 3456
+
+- ${{ if startsWith(variables['Build.SourceBranch'], 'refs/heads/staging') }}:
+  - name: Jupiter_ID
+    value: 2345
+
+- ${{ if startsWith(variables['Build.SourceBranch'], 'refs/heads/master') }}:
+  - name: Jupiter_ID
+    value: 7890
+  - name: backend
+    value: $(production_backend)
+  - name: filecreds
+    value: ""
+  - name: environment
+    value: production
+  - name: my_release_env
+    value: Infrastructure_Prod
+  - name: postScriptServicePrincipal
+    value: SC-BC_SP-TBD4203
+  - name: rt_id_env
+    value: prdrt
+  - name: sp_cred
+    value: $(production_sp_cred)
+  - name: vnet_env
+    value: prdvnet
+  - name: vnet_rg_env
+    value: prdvnetrg
+  - name: vw_domjoin_env
+    value: vw_domjoin_cred
+  - name: subscriptionId
+    value: ""
+
