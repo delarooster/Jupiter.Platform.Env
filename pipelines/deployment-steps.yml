@@ -1,16 +1,6 @@
 parameters:
   - name: azureSubscriptionSvcCxn
     type: string
-  - name: initializeIoTCentral
-    type: boolean
-    default: false
-  - name: createAdminUser
-    type: boolean
-    default: false
-  - name: adminUserObjectId
-    type: string
-  - name: adminUserEmail
-    type: string
   - name: resourceGroupName
     type: string
   - name: runPostDeploymentScripts
@@ -18,216 +8,94 @@ parameters:
     default: true
   - name: subscriptionId
     type: string
-
+  - name: env
+    type: string
+    default: dv
 
 steps:
-  - ${{ if parameters.runPostDeploymentScripts }}:
-    - task: AzureCLI@2
-      displayName: 'Install IoT Extensions'
-      inputs:
-        azureSubscription: '${{parameters.azureSubscriptionSvcCxn}}'
-        scriptType: 'pscore'
-        scriptLocation: 'inlineScript'
-        inlineScript: |
-          echo '${{parameters.azureSubscriptionSvcCxn}}'
-          az config set extension.use_dynamic_install=yes_without_prompt
-          az extension add --name azure-iot
-          echo "##[command]Set the scope to subscription id: ${{ parameters.subscriptionId }}"
-          az account set -s '${{ parameters.subscriptionId }}'
+  - task: AzureCLI@2
+    displayName: "Install IoT Extensions"
+    inputs:
+      azureSubscription: "${{parameters.azureSubscriptionSvcCxn}}"
+      scriptType: "pscore"
+      scriptLocation: "inlineScript"
+      inlineScript: |
+        echo '${{parameters.azureSubscriptionSvcCxn}}'
+        az config set extension.use_dynamic_install=yes_without_prompt
+        az extension add --name azure-iot
+        echo "##[command]Set the scope to subscription id: ${{ parameters.subscriptionId }}"
+        az account set -s '${{ parameters.subscriptionId }}'
 
-    - task: AzureCLI@2
-      displayName: 'Retrieve IoTC App Id'
-      inputs:
-        azureSubscription: '${{parameters.azureSubscriptionSvcCxn}}'
-        scriptType: 'pscore'
-        scriptLocation: 'inlineScript'
-        inlineScript: |
-          # retrieve iot central application id
-          echo "##[command]IoT Central app to retrieve id: $(terraformOutput.iotCentralName)"
-          echo "##[command]Set the scope to subscription id: ${{ parameters.subscriptionId }}"
-          az account set -s '${{ parameters.subscriptionId }}'
+  - task: AzureCLI@2
+    displayName: "Migrate Iot Hub to DigiCert Global Root C2"
+    inputs:
+      azureSubscription: "${{parameters.azureSubscriptionSvcCxn}}"
+      scriptType: "pscore"
+      scriptLocation: "inlineScript"
+      inlineScript: |
+        Write-Host "Set subscription scope to: ${{ parameters.subscriptionId }}"
+        az account set -s ${{ parameters.subscriptionId }}
 
-          $iotcAppId=az iot central app show `
-            -n '$(terraformOutput.iotCentralName)' `
-            -g '${{ parameters.resourceGroupName }}' `
-            --subscription '${{ parameters.subscriptionId }}' `
-            --query applicationId
-            
-          Write-Host "##vso[task.setvariable variable=iotcAppId;]$iotcAppId"
+        Write-Host "Update the root authority for IoT Hub: $(terraformOutput.iotHubName)"
+        az iot hub certificate root-authority set `
+          --hub-name $(terraformOutput.iotHubName) `
+          --certificate-authority v2 `
+          --subscription ${{ parameters.subscriptionId }} `
+          --yes true
 
-    - task: AzureCLI@2
-      displayName: 'Save IoTC App Id in Key Vault'
-      inputs:
-        azureSubscription: '${{parameters.azureSubscriptionSvcCxn}}'
-        scriptType: 'pscore'
-        scriptLocation: 'inlineScript'
-        inlineScript: |
-          echo "##[warning]Store IoT Central App Id in: $(terraformOutput.keyVaultName)"
-          az keyvault secret set `
-            --name IOTC-JupiterLICATION-ID `
-            --vault-name $(terraformOutput.keyVaultName) `
-            --subscription ${{ parameters.subscriptionId }} `
-            --value "$(iotcAppId)" `
-            --description "IoT Central AppId from $(terraformOutput.iotCentralName)"
+  - task: AzureCLI@2
+    displayName: "Create DPS Link"
+    inputs:
+      azureSubscription: "${{parameters.azureSubscriptionSvcCxn}}"
+      scriptType: "pscore"
+      scriptLocation: "scriptPath"
+      scriptPath: "./pipelines/scripts/createDpsLink.ps1"
+      arguments: >
+        -dps $(terraformOutput.dpsName)
+        -iot_hub $(terraformOutput.iotHubName)
+        -dps_resourceGroup $(terraformOutput.shared_resourceGroup)
+        -iothub_resourceGroup $(terraformOutput.tier_resourceGroup)
+        -subscription ${{ parameters.subscriptionId }}
 
-    - ${{ if parameters.createAdminUser }}:
-      - task: AzureCLI@2
-        displayName: 'Setup Admin user'
-        inputs:
-          azureSubscription: '${{parameters.azureSubscriptionSvcCxn}}'
-          scriptType: 'pscore'
-          scriptLocation: 'inlineScript'
-          inlineScript: |
-            echo "##[command]Create Admin User for ${{ parameters.adminUserEmail }}"
-            echo "##[command]Set the scope to subscription id: ${{ parameters.subscriptionId }}"
-            az account set -s '${{ parameters.subscriptionId }}'
+  - task: AzureCLI@2
+    displayName: "Upload Certificate to DPS"
+    inputs:
+      azureSubscription: "${{parameters.azureSubscriptionSvcCxn}}"
+      scriptType: "pscore"
+      scriptLocation: "scriptPath"
+      scriptPath: "./pipelines/scripts/upload_certificate.ps1"
+      arguments: >
+        -dps $(terraformOutput.dpsName) 
+        -shared_resourceGroup $(terraformOutput.shared_resourceGroup) 
+        -subscription ${{ parameters.subscriptionId }}
+        -env ${{ parameters.env }}
 
-            az iot central user create --user-id '${{ parameters.adminUserObjectId }}' `
-              --app-id "$(iotcAppId)" `
-              --email '${{ parameters.adminUserEmail }}' `
-              --role admin `
-              --subscription '${{ parameters.subscriptionId }}' `
-              --tenant-id '1309aa3b-9cd5-4e53-8f27-8ee6a2573c3c'
+  - task: AzureCLI@2
+    displayName: "Create Enrollment Group"
+    inputs:
+      azureSubscription: "${{parameters.azureSubscriptionSvcCxn}}"
+      scriptType: "pscore"
+      scriptLocation: "scriptPath"
+      scriptPath: ./pipelines/scripts/createEnrollmentGroups.ps1
+      arguments: >
+        -dps $(terraformOutput.dpsName)
+        -shared_resourceGroup $(terraformOutput.shared_resourceGroup)
+        -iot_hub $(terraformOutput.iotHubName)
+        -tier_resourceGroup $(terraformOutput.tier_resourceGroup)
+        -subscription ${{ parameters.subscriptionId }}
+        -env ${{ parameters.env }}
+        -deploymentRegion $(terraformOutput.deploymentRegion)
 
-    ## TODO: Create task for updating Data Exports
-    - ${{ if parameters.initializeIoTCentral }}:
-      - task: AzureCLI@2
-        displayName: 'Setup IoT Central Data Export to EventHub'
-        inputs:
-          azureSubscription: '${{parameters.azureSubscriptionSvcCxn}}'
-          scriptType: 'pscore'
-          scriptLocation: 'inlineScript'
-          inlineScript: |
-            # Create new guid for destination
-            $destinationGuid = [guid]::NewGuid().Guid
-            $callistoEventHub = 'callisto'
-            $destinationDataExportName = 'Callisto EventHub'
-            [bool]$createNewDataExport = $true
-            
-            echo "##[command]Set the scope to subscription id: ${{ parameters.subscriptionId }}"
-            az account set -s '${{ parameters.subscriptionId }}'
+  # Container Registries only exist in North Europe shared resource groups
 
-            echo "##[command]Check if we need to initialize this IoTC instance"
-            $destinationsArray = az iot central export destination list `
-              --subscription '${{ parameters.subscriptionId }}' `
-              --app-id $(iotcAppId)
-            
-            echo "##[command]Destination Data Array value: $destinationsArray"
-
-            foreach ($dest in $destinationsArray | ConvertFrom-Json)
-            {
-              echo "##[command]Destination Data Export name: $destinationDataExportName"
-              if($dest.displayName -eq $destinationDataExportName)
-              {
-                echo "##[warning]Destination Data Export already exists, skipping creation: $destinationDataExportName"
-                $createNewDataExport = $false
-                break                
-              }
-            }
-            
-            echo "##[command]Create data export?: $createNewDataExport"
-            if($createNewDataExport)
-            {
-              echo "##[command]Retrieve event hub connection string"
-              $eventHubConnString=az eventhubs eventhub authorization-rule keys list `
-                --resource-group '${{ parameters.resourceGroupName }}' `
-                --subscription '${{ parameters.subscriptionId }}' `
-                --namespace-name "$(terraformOutput.eventHubNamespaceName)" `
-                --eventhub-name $callistoEventHub `
-                --name "iotcSend" `
-                --query primaryConnectionString
-              echo "##[command]Event Hub Connection string: $eventHubConnString"
-
-              echo "##[command]Create new iotc export destination"
-              $authJson = '{""type"": ""connectionString"",""connectionString"":""' + $eventHubConnString + '""}'
-
-              echo "##[command]Create IoT Central data destination export"
-              az iot central export destination create `
-                --app-id $(iotcAppId) `
-                --subscription '${{ parameters.subscriptionId }}' `
-                --dest-id $destinationGuid `
-                --type eventhubs@v1 `
-                --name $destinationDataExportName `
-                --authorization $authJson
-            }
-
-            # create data exports
-            $deviceConnectivityGuid = [guid]::NewGuid().Guid
-            $propertyGuid = [guid]::NewGuid().Guid
-            $telemetryGuid = [guid]::NewGuid().Guid
-            $deviceDataExportDisplayName = "Callisto Connectivity Events to EventHub"
-            $propertyExportDisplayName = "Callisto Property Changes to EventHub"
-            $telemetryExportDisplayName = "Callisto Telemetry to EventHub"
-            [bool]$createDeviceDataExport = $true
-            [bool]$createPropertyExport = $true
-            [bool]$createTelemetryExport = $true
-            
-            $exportArray = az iot central export list `
-                              --app-id $(iotcAppId) `
-                              --subscription '${{ parameters.subscriptionId }}'
-
-            foreach ($export in $exportArray | ConvertFrom-Json) 
-            {
-              if($export.displayName -eq $deviceDataExportDisplayName)
-              {
-                echo "##[warning]Device data export already exists, skipping creation: $deviceDataExportDisplayName"
-                $createDeviceDataExport = $false
-              }
-
-              if($export.displayName -eq $propertyExportDisplayName)
-              {
-                echo "##[warning]Property export already exists, skipping creation: $propertyExportDisplayName"
-                $createPropertyExport = $false
-              }
-
-              if($export.displayName -eq $telemetryExportDisplayName)
-              {
-                echo "##[warning]Telemetry export already exists, skipping creation: $telemetryExportDisplayName"
-                $createTelemetryExport = $false
-              }
-            }
-
-            echo "##[command]Retrieve data destination export id"
-            $callistoEventHubId = az iot central export destination list `
-              --app-id $(iotcAppId) `
-              --subscription '${{ parameters.subscriptionId }}' `
-              --query "[?displayName=='$destinationDataExportName'].id" `
-              -o tsv
-            $destinationJson = '[{""id"": ""' + $callistoEventHubId + '""}]'
-
-
-            if($createDeviceDataExport)
-            {
-              echo "##[command]Create device data export"
-              az iot central export create `
-                --app-id $(iotcAppId) `
-                --subscription '${{ parameters.subscriptionId }}' `
-                --export-id $deviceConnectivityGuid `
-                --display-name $deviceDataExportDisplayName `
-                --source deviceConnectivity `
-                --destinations $destinationJson
-            }
-
-            if($createPropertyExport)
-            {
-              echo "##[command]Create property data export"
-              az iot central export create `
-                --app-id $(iotcAppId) `
-                --subscription '${{ parameters.subscriptionId }}' `
-                --export-id $propertyGuid `
-                --display-name $propertyExportDisplayName `
-                --source properties `
-                --destinations $destinationJson
-            }
-
-            if($createTelemetryExport)
-            {
-              echo "##[command]Create telemetry data export"
-              az iot central export create `
-                --app-id $(iotcAppId) `
-                --subscription '${{ parameters.subscriptionId }}' `
-                --export-id $telemetryGuid `
-                --display-name $telemetryExportDisplayName `
-                --source telemetry `
-                --destinations $destinationJson
-            }
+  - task: AzureCLI@2
+    displayName: "Create ACR Purge Task"
+    inputs:
+      azureSubscription: "${{parameters.azureSubscriptionSvcCxn}}"
+      scriptType: "pscore"
+      scriptLocation: "scriptPath"
+      scriptPath: ./pipelines/scripts/purge_acr.ps1
+      arguments: >
+        -acr_name $(terraformOutput.acrName)
+        -subscription ${{ parameters.subscriptionId }}
+        -deploymentRegion $(terraformOutput.deploymentRegion)

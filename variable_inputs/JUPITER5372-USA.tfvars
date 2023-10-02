@@ -17,7 +17,7 @@ iotcSku          = "ST1"
 
 # Azure Container Registry
 acrSku = "Basic"
-acr_name = "crasgapp5372pcus01"
+acr_name = "crjupiterapp5372pcus01"
 
 #Event Hub
 eventHubSku = "Standard"

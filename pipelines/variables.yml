@@ -1,0 +1,90 @@
+variables:
+- group: 'Standard Terraform Variables'
+- group: 'Common Resource IDs'
+
+## global non-prod variables
+- name: backend
+  value: $(non_production_backend)
+- name: filecreds
+  value: nonprd_BRN_terraform_sp_creds.auto.tfvars
+- name: environment
+  value: non_production
+- name: env_type
+  value: 'N'
+- name: my_release_env
+  value: IoT_Development
+- name: postScriptServicePrincipal
+  value: SC-BC_SP-TBD4203
+- name: rt_id_env
+  value: nonprdrt
+- name: sp_cred
+  value: $(non_production_sp_cred)
+- name: vnet_env
+  value: nonprdvnet
+- name: vnet_rg_env
+  value: nonprdvnetrg
+- name: vw_domjoin_env
+  value: vw_domjoin_cred
+- name: subscriptionId
+  value: 9090f061-a540-4064-90be-c9cfb8341aa1
+
+- ${{ if startsWith(variables['Build.SourceBranch'], 'refs/heads/sandbox') }}:
+  - name: APP_ID
+    value: 5371
+  
+- ${{ if startsWith(variables['Build.SourceBranch'], 'refs/heads/develop') }}:
+  - name: APP_ID
+    value: 5768
+
+- ${{ if startsWith(variables['Build.SourceBranch'], 'refs/heads/test') }}:
+  - name: APP_ID
+    value: 5767
+
+- ${{ if startsWith(variables['Build.SourceBranch'], 'refs/heads/staging') }}:
+  - name: APP_ID
+    value: 5373
+  - name: subscriptionId
+    value: 7e2de2c9-54ba-4e34-a048-05e8c41766c0
+  - name: backend
+    value: $(production_backend)
+  - name: filecreds
+    value: prd_BRN_terraform_sp_creds.auto.tfvars
+  - name: environment
+    value: production
+  - name: env_type
+    value: 'P'
+  - name: my_release_env
+    value: IoT_Production
+  - name: rt_id_env
+    value: prdrt
+  - name: sp_cred
+    value: $(production_sp_cred)
+  - name: vnet_rg_env
+    value: prdvnetrg
+
+- ${{ if startsWith(variables['Build.SourceBranch'], 'refs/heads/master') }}:
+  - name: APP_ID
+    value: 5372
+  - name: backend
+    value: $(production_backend)
+  - name: filecreds
+    value: prd_BRN_terraform_sp_creds.auto.tfvars
+  - name: environment
+    value: production
+  - name: env_type
+    value: 'P'
+  - name: my_release_env
+    value: IoT_Production
+  - name: rt_id_env
+    value: prdrt
+  - name: sp_cred
+    value: $(production_sp_cred)
+  - name: vnet_env
+    value: prdvnet
+  - name: vnet_rg_env
+    value: prdvnetrg
+  - name: vw_domjoin_env
+    value: vw_domjoin_cred
+  - name: subscriptionId
+    value: 7e2de2c9-54ba-4e34-a048-05e8c41766c0
+

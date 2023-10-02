@@ -1,383 +1,296 @@
 trigger:
   branches:
     include:
-    - sandbox
-    - develop
-    - test
-    - staging
-    - master
+      - sandbox*
+      - develop
+      - test
+      - staging
+      - master
 pr: none
 
 parameters:
-- name: brn_pool
-  displayName: Build Pool
-  default: 'windows-latest'
-  values:
-    - windows-latest
-    - vs2017-win2016
-    - ubuntu-latest
-    - ubuntu-16.04
-    - SelfBuild
-- name: RunPostDeploymentScripts
-  displayName: Run post deployment scripts
-  type: boolean
-  default: true
-- name: InitializeIoTCentral
-  displayName: Initialize IoT Central
-  type: boolean
-  default: false
-- name: CreateAdminUser
-  type: boolean
-  default: false
-- name: AdminUserEmail
-  displayName: Admin user email
-  type: string
-  default: 'admin_user_email'
-- name: AdminUserObjectId
-  displayName: Admin user object id
-  type: string
-  default: 'admin_user_object_id'
+  - name: brn_pool
+    displayName: Build Pool
+    default: "windows-latest"
+    values:
+      - windows-latest
+      - vs2017-win2016
+      - ubuntu-latest
+      - ubuntu-16.04
+      - SelfBuild
+  - name: BuildSharedResources
+    displayName: Build and Deploy Shared Resources
+    type: boolean
+    default: true
+  - name: RunPostDeploymentScripts
+    displayName: Run post deployment scripts
+    type: boolean
+    default: true
 
 variables:
-- group: 'TBD4203_Variables'
-- template: parameters.yml
+  - group: "TBD4203_Variables"
+  - template: pipelines/variables.yml
 
 stages:
-### ! Build Terraform IaC
-- template: pipelines/build.yml
-  parameters:
-    appId: ${{ variables.Jupiter_ID }}
-    backend: ${{ variables.backend }}
-    environment: ${{ variables.environment }}
-    pool: ${{ parameters.brn_pool }}
-    rt_id_env: ${{ variables.rt_id_env }}
-    sp_cred: ${{ variables.sp_cred }}
-    vnet_env: ${{ variables.vnet_env }}
-    vnet_rg_env: ${{ variables.vnet_rg_env }}
-    vw_domjoin_env: ${{ variables.vw_domjoin_env }}
+  #######################################
+  ## Build and Deploy Shared Resources ##
+  #######################################
+  - template: pipelines/build-shared.yml
+    parameters:
+      appId: ${{ variables.APP_ID }}
+      backend: ${{ variables.backend }}
+      buildShared: ${{ parameters.BuildSharedResources }}
+      environment: ${{ variables.environment }}
+      env_type: ${{ variables.env_type }}
+      pool: ${{ parameters.brn_pool }}
+      resource_folder: "shared_resources"
+      rt_id_env: ${{ variables.rt_id_env }}
+      sp_cred: ${{ variables.sp_cred }}
+      vnet_env: ${{ variables.vnet_env }}
+      vnet_rg_env: ${{ variables.vnet_rg_env }}
+      vw_domjoin_env: ${{ variables.vw_domjoin_env }}
 
-### ! Deploy IaC
-# : Sandbox environment(s)
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5371
-    appIdAppend: "USA"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/sandbox'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', variables.Jupiter_ID, '-N-CUS01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
+  ## : Non-Prod Shared ->
+  - template: pipelines/deploy-shared.yml
+    parameters:
+      appId: ${{ variables.APP_ID }}
+      deployShared: ${{ parameters.BuildSharedResources }}
+      region: "USA"
+      conditionForDeployment: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/sandbox'), eq(variables['Build.SourceBranch'], 'refs/heads/develop'), eq(variables['Build.SourceBranch'], 'refs/heads/test')))
+      env_type: "N"
+      filecreds: ${{ variables.filecreds }}
+      pool: ${{ parameters.brn_pool }}
+      release_env: ${{ variables.my_release_env }}
+  - template: pipelines/deploy-shared.yml
+    parameters:
+      appId: ${{ variables.APP_ID }}
+      region: "NEU"
+      deployShared: ${{ parameters.BuildSharedResources }}
+      conditionForDeployment: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/sandbox'), eq(variables['Build.SourceBranch'], 'refs/heads/develop'), eq(variables['Build.SourceBranch'], 'refs/heads/test')))
+      env_type: "N"
+      filecreds: ${{ variables.filecreds }}
+      pool: ${{ parameters.brn_pool }}
+      release_env: ${{ variables.my_release_env }}
 
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5371
-    appIdAppend: "AUS"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/sandbox'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', variables.Jupiter_ID, '-N-AE01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
+  ## : Production Shared ->
+  - template: pipelines/deploy-shared.yml
+    parameters:
+      appId: ${{ variables.APP_ID }}
+      deployShared: ${{ parameters.BuildSharedResources }}
+      region: "USA"
+      conditionForDeployment: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/staging'), eq(variables['Build.SourceBranch'], 'refs/heads/master')))
+      env_type: "P"
+      filecreds: ${{ variables.filecreds }}
+      pool: ${{ parameters.brn_pool }}
+      release_env: ${{ variables.my_release_env }}
+  - template: pipelines/deploy-shared.yml
+    parameters:
+      appId: ${{ variables.APP_ID }}
+      deployShared: ${{ parameters.BuildSharedResources }}
+      region: "NEU"
+      conditionForDeployment: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/staging'), eq(variables['Build.SourceBranch'], 'refs/heads/master')))
+      env_type: "P"
+      filecreds: ${{ variables.filecreds }}
+      pool: ${{ parameters.brn_pool }}
+      release_env: ${{ variables.my_release_env }}
 
-# : Develop environment(s)
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5768
-    appIdAppend: "USA"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/develop'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', variables.Jupiter_ID, '-N-CUS01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
+  #######################################
+  ##  Build and Deploy Tier Resources  ##
+  #######################################
+  ##: Tier Resources Terraform IaC
+  - template: pipelines/build-tiers.yml
+    parameters:
+      appId: ${{ variables.APP_ID }}
+      backend: ${{ variables.backend }}
+      depends_on:
+        - "Deploy_USA${{ variables.APP_ID }}${{ variables.env_type }}_Shared"
+        - "Deploy_NEU${{ variables.APP_ID }}${{ variables.env_type }}_Shared"
+      environment: ${{ variables.environment }}
+      env_type: ${{ variables.env_type }}
+      pool: ${{ parameters.brn_pool }}
+      resource_folder: "tier_resources"
+      rt_id_env: ${{ variables.rt_id_env }}
+      sp_cred: ${{ variables.sp_cred }}
+      vnet_env: ${{ variables.vnet_env }}
+      vnet_rg_env: ${{ variables.vnet_rg_env }}
+      vw_domjoin_env: ${{ variables.vw_domjoin_env }}
 
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5768
-    appIdAppend: "AUS"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/develop'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', variables.Jupiter_ID, '-N-AE01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
+  ## : Sandbox tier environment(s)
+  - template: pipelines/deploy-tiers.yml
+    parameters:
+      appId: 5371
+      region: "USA"
+      conditionForDeployment: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/sandbox'))
+      env_type: ${{ variables.env_type }}
+      filecreds: ${{ variables.filecreds }}
+      pool: ${{ parameters.brn_pool }}
+      release_env: ${{ variables.my_release_env }}
+      deploymentSteps:
+        - template: pipelines/deployment-steps.yml
+          parameters:
+            azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
+            resourceGroupName: ${{ format('{0}{1}{2}', 'RG-JUPITER-APP', variables.APP_ID, '-N-CUS01') }}
+            runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
+            subscriptionId: ${{ variables.subscriptionId }}
+            env: Sd
+  - template: pipelines/deploy-tiers.yml
+    parameters:
+      appId: 5371
+      region: "NEU"
+      conditionForDeployment: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/sandbox'))
+      env_type: ${{ variables.env_type }}
+      filecreds: ${{ variables.filecreds }}
+      pool: ${{ parameters.brn_pool }}
+      release_env: ${{ variables.my_release_env }}
+      deploymentSteps:
+        - template: pipelines/deployment-steps.yml
+          parameters:
+            azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
+            resourceGroupName: ${{ format('{0}{1}{2}', 'RG-JUPITER-APP', variables.APP_ID, '-N-NEU01') }}
+            runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
+            subscriptionId: ${{ variables.subscriptionId }}
+            env: Sd
 
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5768
-    appIdAppend: "JAP"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/develop'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', variables.Jupiter_ID, '-N-JE01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
+  ## : Develop tier environment(s)
+  - template: pipelines/deploy-tiers.yml
+    parameters:
+      appId: 5768
+      region: "USA"
+      conditionForDeployment: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+      env_type: ${{ variables.env_type }}
+      filecreds: ${{ variables.filecreds }}
+      pool: ${{ parameters.brn_pool }}
+      release_env: ${{ variables.my_release_env }}
+      deploymentSteps:
+        - template: pipelines/deployment-steps.yml
+          parameters:
+            azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
+            resourceGroupName: ${{ format('{0}{1}{2}', 'RG-JUPITER-APP', variables.APP_ID, '-N-CUS01') }}
+            runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
+            subscriptionId: ${{ variables.subscriptionId }}
+            env: Dv
+  - template: pipelines/deploy-tiers.yml
+    parameters:
+      appId: 5768
+      region: "NEU"
+      conditionForDeployment: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+      env_type: ${{ variables.env_type }}
+      filecreds: ${{ variables.filecreds }}
+      pool: ${{ parameters.brn_pool }}
+      release_env: ${{ variables.my_release_env }}
+      deploymentSteps:
+        - template: pipelines/deployment-steps.yml
+          parameters:
+            azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
+            resourceGroupName: ${{ format('{0}{1}{2}', 'RG-JUPITER-APP', variables.APP_ID, '-N-NEU01') }}
+            runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
+            subscriptionId: ${{ variables.subscriptionId }}
+            env: Dv
 
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5768
-    appIdAppend: "ASA"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/develop'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', variables.Jupiter_ID, '-N-SEA01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
+  ## : Test tier environment(s)
+  - template: pipelines/deploy-tiers.yml
+    parameters:
+      appId: 5767
+      region: "USA"
+      conditionForDeployment: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/test'))
+      env_type: ${{ variables.env_type }}
+      filecreds: ${{ variables.filecreds }}
+      pool: ${{ parameters.brn_pool }}
+      release_env: ${{ variables.my_release_env }}
+      deploymentSteps:
+        - template: pipelines/deployment-steps.yml
+          parameters:
+            azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
+            resourceGroupName: ${{ format('{0}{1}{2}', 'RG-JUPITER-APP', '5767', '-N-CUS01') }}
+            runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
+            subscriptionId: ${{ variables.subscriptionId }}
+            env: Ts
+  - template: pipelines/deploy-tiers.yml
+    parameters:
+      appId: 5767
+      region: "NEU"
+      conditionForDeployment: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/test'))
+      env_type: ${{ variables.env_type }}
+      filecreds: ${{ variables.filecreds }}
+      pool: ${{ parameters.brn_pool }}
+      release_env: ${{ variables.my_release_env }}
+      deploymentSteps:
+        - template: pipelines/deployment-steps.yml
+          parameters:
+            azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
+            resourceGroupName: ${{ format('{0}{1}{2}', 'RG-JUPITER-APP', '5767', '-N-NEU01') }}
+            runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
+            subscriptionId: ${{ variables.subscriptionId }}
+            env: Ts
 
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5768
-    appIdAppend: "UK"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/develop'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', variables.Jupiter_ID, '-N-UKS01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
+  ## : Staging tier environment(s)
+  - template: pipelines/deploy-tiers.yml
+    parameters:
+      appId: 5373
+      region: "USA"
+      conditionForDeployment: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/staging'))
+      env_type: ${{ variables.env_type }}
+      filecreds: ${{ variables.filecreds }}
+      pool: ${{ parameters.brn_pool }}
+      release_env: ${{ variables.my_release_env }}
+      deploymentSteps:
+        - template: pipelines/deployment-steps.yml
+          parameters:
+            azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
+            resourceGroupName: ${{ format('{0}{1}{2}', 'RG-JUPITER-APP', '5373', '-P-CUS01') }}
+            runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
+            subscriptionId: ${{ variables.subscriptionId }}
+            env: Sg
+  - template: pipelines/deploy-tiers.yml
+    parameters:
+      appId: 5373
+      region: "NEU"
+      conditionForDeployment: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/staging'))
+      env_type: ${{ variables.env_type }}
+      filecreds: ${{ variables.filecreds }}
+      pool: ${{ parameters.brn_pool }}
+      release_env: ${{ variables.my_release_env }}
+      deploymentSteps:
+        - template: pipelines/deployment-steps.yml
+          parameters:
+            azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
+            resourceGroupName: ${{ format('{0}{1}{2}', 'RG-JUPITER-APP', '5373', '-P-NEU01') }}
+            runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
+            subscriptionId: ${{ variables.subscriptionId }}
+            env: Sg
 
-# : Test environment(s)
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5767
-    appIdAppend: "USA"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/test'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', '5767', '-N-CUS01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
-
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5767
-    appIdAppend: "AUS"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/test'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', '5767', '-N-AE01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
-
-# : Staging environment(s)
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5373
-    appIdAppend: "USA"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/staging'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', '5373', '-N-CUS01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
-
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5373
-    appIdAppend: "AUS"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/staging'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', '5373', '-N-AE01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
-
-# : Production environment(s)
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5372
-    appIdAppend: "USA"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/master'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', '5372', '-P-CUS01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
-
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5372
-    appIdAppend: "AUS"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/master'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', '5372', '-P-AE01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
-
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5372
-    appIdAppend: "JAP"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/master'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', '5372', '-P-JE01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
-
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5372
-    appIdAppend: "ASA"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/master'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', '5372', '-P-SEA01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
-
-- template: pipelines/deploy.yml
-  parameters:
-    appId: 5372
-    appIdAppend: "UK"
-    conditionForDeployment: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/master'))
-    filecreds: ${{ variables.filecreds }}
-    pool: ${{ parameters.brn_pool }}
-    release_env: ${{ variables.my_release_env }}
-    deploymentSteps:
-      - template: pipelines/deployment-steps.yml
-        parameters:
-          azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
-          initializeIoTCentral: ${{ parameters.InitializeIoTCentral }}
-          createAdminUser: ${{ parameters.CreateAdminUser }}
-          adminUserEmail: ${{ parameters.AdminUserEmail }}
-          adminUserObjectId: ${{ parameters.AdminUserObjectId }}
-          resourceGroupName: ${{ format('{0}{1}{2}', 'RG-ASG-Jupiter', '5372', '-P-UKS01') }}
-          runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
-          subscriptionId: ${{ variables.subscriptionId }}
+  ## : Production tier environment(s)
+  - template: pipelines/deploy-tiers.yml
+    parameters:
+      appId: 5372
+      region: "USA"
+      conditionForDeployment: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
+      env_type: ${{ variables.env_type }}
+      filecreds: ${{ variables.filecreds }}
+      pool: ${{ parameters.brn_pool }}
+      release_env: ${{ variables.my_release_env }}
+      deploymentSteps:
+        - template: pipelines/deployment-steps.yml
+          parameters:
+            azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
+            resourceGroupName: ${{ format('{0}{1}{2}', 'RG-JUPITER-APP', '5372', '-P-CUS01') }}
+            runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
+            subscriptionId: ${{ variables.subscriptionId }}
+            env: Pd
+  - template: pipelines/deploy-tiers.yml
+    parameters:
+      appId: 5372
+      region: "NEU"
+      conditionForDeployment: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
+      env_type: ${{ variables.env_type }}
+      filecreds: ${{ variables.filecreds }}
+      pool: ${{ parameters.brn_pool }}
+      release_env: ${{ variables.my_release_env }}
+      deploymentSteps:
+        - template: pipelines/deployment-steps.yml
+          parameters:
+            azureSubscriptionSvcCxn: ${{ variables.postScriptServicePrincipal }}
+            resourceGroupName: ${{ format('{0}{1}{2}', 'RG-JUPITER-APP', '5372', '-P-NEU01') }}
+            runPostDeploymentScripts: ${{ parameters.RunPostDeploymentScripts }}
+            subscriptionId: ${{ variables.subscriptionId }}
+            env: Pd

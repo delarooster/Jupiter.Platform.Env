@@ -116,19 +116,51 @@ variable "azure_tenant_id" {
   description = "Azure tenant ID"
   default     = ""
 }
+variable "acr_count" {
+  type = string
+  default = "0"
+}
 
-# Variables for IOT Central
-variable "iot_central_name" {
-  type        = string
-  description = "IOT Central resource name"
+variable "shared_resource_group" {
+  type = string
 }
-variable "iotcDisplayName" {
+variable "region" {
+  type = string
+}
+
+# IoT Hub
+variable "iot_hub_name" {
     type    = string
-    default = "Callisto [Dev]"
 }
-variable "iotcSku" {
+variable "ioth_sku" {
+    type    = string
+}
+variable "ioth_capacity" {
+    type    = string
+}
+variable "iothub_qa_auth_rule_count" {
+  type    = string
+  default = 0
+}
+
+# ADX
+variable "adx_cluster_sku" {
+  type = string
+  default = "Dev(No SLA)_Standard_E2a_v4"
+}
+variable "adx_cluster_capacity" {
+  type = string
+  default = 1
+}
+
+# DPS
+variable "dps_sku" {
     type    = string
     default = "S1"
+}
+variable "dps_capacity" {
+    type    = string
+    default = "1"
 }
 
 # Azure Container Registry
@@ -140,15 +172,26 @@ variable "acr_name" {
     type    = string
     default = "crappname"
 }
+variable "old_acr_name" {
+    type    = string
+    default = ""
+}
+variable "old_acr_count" {
+    type    = string
+    default = 0
+}
 # Event Hub
 variable "eventHubSku" {
     type    = string
     default = "Standard"
 }
-
 variable "callistoPartitions" {
   type    = string
   default = 10
+}
+variable "load_test_auth_rule_count" {
+  type    = string
+  default = 0
 }
 
 # Service Principals
@@ -164,6 +207,11 @@ variable "atdObjectId" {
 }
 
 variable "mcObjectId" {
+  type    = string
+  default = ""
+}
+
+variable "dwcObjectId" {
   type    = string
   default = ""
 }
@@ -297,4 +345,19 @@ variable "VL_01_data_storage_account_type" {
   type        = string
   description = "VM Data Disk Storage Type"
   default     = "Standard_LRS"
+}
+variable "VM_01_storageOSDiskManagedDiskType" {
+  type        = string
+  description = "The OS disk type"
+  default     = "Standard_LRS"
+}
+variable "VM_01_storageOSDiskSize" {
+  type        = string
+  description = "The OS disk size in GB"
+  default     = "127"
+}
+variable "VM_01_azvm_backup_input" {
+  type        = string
+  description = "Backup Type"
+  default     = "AzureVM_Backup"
 }

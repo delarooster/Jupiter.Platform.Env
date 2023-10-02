@@ -1,0 +1,119 @@
+parameters:
+- name: appId
+  type: string
+- name: region
+  type: string
+  default: ''
+- name: pool
+  type: string
+- name: env_type
+  type: string
+- name: filecreds
+  type: string
+- name: release_env
+  type: string
+- name: conditionForDeployment
+  type: object
+  default: and(succeeded(), in(variables['Build.SourceBranch'], 'refs/heads/develop', 'refs/heads/master'))
+- name: deploymentSteps
+  type: stepList
+  default: []
+- name: deployShared
+  type: boolean
+  default: true
+
+stages:
+- stage: Deploy_${{ parameters.region }}${{ parameters.appId }}${{ parameters.env_type }}_Shared
+  displayName: Deploy ${{ parameters.appId }}_${{ parameters.region }} ${{ parameters.env_type }} Shared Resources
+  dependsOn: Build_Shared
+  condition: ${{ parameters.conditionForDeployment }}
+  jobs:
+  - deployment: Deploy_${{ parameters.env_type }}_${{ parameters.region }}_Shared
+    displayName: Deploy ${{ parameters.env_type }} ${{ parameters.region }} Shared Resources
+    pool:
+      vmImage: ${{ parameters.pool }}
+    variables:
+      appIdName: "APP${{ parameters.appId }}"
+      regionalAppIdName: "APP${{ parameters.appId }}-${{ parameters.region }}"
+    environment: ${{ parameters.release_env }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - ${{ if parameters.deployShared }}:
+              - checkout: self
+                clean: true
+              - task: DownloadSecureFile@1
+                displayName: "Download secure file"
+                inputs:
+                  secureFile: ${{ parameters.filecreds }}
+
+              - task: CopyFiles@2
+                displayName: 'Copy Files to: D:\a\1\${{ variables.appIdName }}'
+                inputs:
+                  SourceFolder: '$(Agent.TempDirectory)'
+                  Contents: ${{ parameters.filecreds }}
+                  TargetFolder: 'D:\a\1\${{ variables.appIdName }}'
+
+              - powershell: |              
+                  $sharedFileName = -join("SHARED-", "${{ parameters.env_type }}", "-", "${{ parameters.region }}")
+                  Write-Host "##vso[task.setvariable variable=sharedFileName;]$sharedFileName"
+                displayName: Concat shared resource name
+
+              - powershell: |
+                  cd ..
+                  cd ${{ variables.appIdName }}  
+
+                  echo "[command]Apply Terraform plan for: Shared $(sharedFileName)"
+                  .\terraform.exe apply -auto-approve "plans/$(sharedFileName)_plan.tfplan"
+                displayName: Terraform Apply $(sharedFileName)_plan.tfplan
+
+              # dynamically retrieve terraform outputs and convert to agent-usable variables 
+              # Nota bene:  use $(terraformOutput.<output_declaration_name>) syntax
+              - powershell: |
+                  cd ..
+                  cd ${{ variables.appIdName }}
+
+                  $outputFilePath = "$(sharedFileName)_output.json"
+                  
+                  echo "[warning]Retrieve correct state file for output retrieval"
+                  Move-Item -Path "./plans/$(sharedFileName).tfstate" -Destination ./.terraform/terraform.tfstate
+
+                  echo "[warning]Path of Terraform output file $outputFilePath"
+                  .\terraform.exe init -force-copy -migrate-state
+                  .\terraform.exe output -json > "$(sharedFileName)_output.json"
+
+                  $rawOut = Get-Content -Path "$(sharedFileName)_output.json"
+                  echo "$[warning] Raw output: $rawOut"
+
+                  $out = Get-Content -Path "$(sharedFileName)_output.json" | ConvertFrom-Json
+                  echo "$[warning] Converted JSON output: $out"
+
+                  if($out -ne $null)
+                  {
+                      $provisionOutputs = [PSCustomObject]@{}
+                      $out | Get-Member -MemberType NoteProperty | ForEach-Object {
+                        $name = $_.name
+                        $provisionOutputs | Add-Member -MemberType NoteProperty -Name $name -value $out.$name.value
+                        Write-Host "##vso[task.setvariable variable=$($name);isOutput=true]$($out.$name.value)"
+                        echo "[command]Variable name to output: $name"
+                        echo "[command]Variable value set: $($out.$name.value)"
+                      }
+                  }
+                  else {
+                      Write-Host "Terraform outputs are null"
+                  }
+                displayName: "Extract Terraform Output Variables"
+                name: 'terraformOutput'
+              
+            # using stepList maintains the pipeline context (working session)
+            # so any of the above variables generated
+            # are accessible by default to the below deploymentSteps
+            - ${{ each step in parameters.deploymentSteps }}:
+              - ${{ step }}
+
+            - task: DeleteFiles@1
+              displayName: 'Delete files from D:\a\1\${{ variables.appIdName }}'
+              inputs:
+                SourceFolder: 'D:\a\1\${{ variables.appIdName }}'
+                Contents: ${{ parameters.filecreds }}

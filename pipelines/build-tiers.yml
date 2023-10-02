@@ -1,0 +1,207 @@
+parameters:
+  - name: appId
+    type: string
+  - name: backend
+    type: string
+  - name: environment
+    type: string
+  - name: env_type
+    type: string
+  - name: pool
+    type: string
+  - name: resource_folder
+    type: string
+  - name: rt_id_env
+    type: string
+  - name: sp_cred
+    type: string
+  - name: vnet_env
+    type: string
+  - name: vnet_rg_env
+    type: string
+  - name: vw_domjoin_env
+    type: string
+  - name: depends_on
+    type: object
+    default:
+      - Deploy_USA_Shared
+      - Deploy_NEU_Shared
+
+stages:
+  - stage: Build_Tiers
+    displayName: Build ${{ parameters.appId }} Tiers
+    dependsOn:
+      - ${{ each sharedResourcesDeployment in parameters.depends_on }}:
+          - ${{ sharedResourcesDeployment }}
+    pool:
+      vmImage: ${{ parameters.pool }}
+    variables:
+      - name: appIdName
+        value: "APP${{ parameters.appId }}"
+    jobs:
+      - job: Build_${{ parameters.appId }}_Tiers
+        steps:
+          - checkout: self
+            clean: true
+          - task: UniversalPackages@0
+            inputs:
+              command: download
+              vstsFeed: "powershell_scripts"
+              vstsFeedPackage: "terraform_download_script"
+              vstsPackageVersion: "$(latest_terraform_download_script)"
+            displayName: "Pull Terraform Download Package"
+          - powershell: |
+              cd terraform_download_script
+              ./terraform_download_script.ps1
+            displayName: "Download Terraform Executable"
+          - task: UniversalPackages@0
+            displayName: "Download latest_naming_module"
+            inputs:
+              command: download
+              vstsFeed: "terraform_modules"
+              vstsFeedPackage: "terraform_naming_module"
+              vstsPackageVersion: "$(latest_naming_module)"
+          - task: UniversalPackages@0
+            displayName: "Download latest_application_module"
+            inputs:
+              command: download
+              vstsFeed: "terraform_modules"
+              vstsFeedPackage: "terraform_standard_application_module"
+              vstsPackageVersion: "1.3.406"
+              # vstsPackageVersion: "$(latest_application_module)"
+          - task: DownloadBuildArtifacts@0
+            displayName: "Download latest_nsr_module"
+            inputs:
+              buildType: specific
+              project: NASA
+              pipeline: $(nsr_module_build_pipeline)
+              buildVersionToDownload: "latestFromBranch"
+              branchName: "refs/heads/master"
+              downloadType: "specific"
+              itemPattern: "**"
+              downloadPath: "$(Build.SourcesDirectory)"
+          - task: UniversalPackages@0
+            displayName: "Log Analytics Download"
+            inputs:
+              command: download
+              vstsFeed: "terraform_modules"
+              vstsFeedPackage: "terraform_log_analytics_azure_module"
+              vstsPackageVersion: "$(latest_log_analytics_module)"
+          - task: UniversalPackages@0
+            displayName: "Download terraform_backup_policy_module"
+            inputs:
+              command: download
+              vstsFeed: "terraform_modules"
+              vstsFeedPackage: "terraform_backup_policy_module"
+              vstsPackageVersion: "0.0.12" # "$(latest_backup_policy_module)"
+          - task: UniversalPackages@0
+            displayName: "Download latest_vm_azure_module_v2"
+            inputs:
+              command: download
+              vstsFeed: "terraform_modules"
+              vstsFeedPackage: "terraform_vm_azure_module_v2"
+              vstsPackageVersion: "0.0.176"
+          # - task: UniversalPackages@0
+          #   displayName: 'terraform_vm_backup_module'
+          #   inputs:
+          #     command: download
+          #     vstsFeed: 'terraform_modules'
+          #     vstsFeedPackage: 'terraform_vm_backup_module'
+          #     vstsPackageVersion: "$(latest_terraform_vm_backup_module)"
+          - task: DownloadSecureFile@1
+            displayName: "Download backend files"
+            inputs:
+              secureFile: ${{ parameters.backend }}
+          - task: DownloadSecureFile@1
+            displayName: "Download service principal files"
+            inputs:
+              secureFile: ${{ parameters.sp_cred }}
+          - task: CopyFiles@2
+            displayName: "Copy backend files"
+            inputs:
+              sourceFolder: $(Agent.TempDirectory)
+              contents: ${{ parameters.backend }}
+              targetFolder: $(Build.SourcesDirectory)
+          - task: CopyFiles@2
+            displayName: "Copy service principal files"
+            inputs:
+              sourceFolder: $(Agent.TempDirectory)
+              contents: ${{ parameters.sp_cred }}
+              targetFolder: $(Build.SourcesDirectory)
+
+          # Create Terraform plan
+          - powershell: |
+              # Get Files matching AppId pattern
+              ## e.g. injected '5371', files 'APP5371' and 'APP5371_NEU' are retrieved
+              $appFiles = ((dir .\variable_inputs\APP${{ parameters.appId }}*.tfvars | Get-Item ))
+
+              echo "[command]Files found matching ${{ parameters.appId }} pattern:" $appFiles.Basename
+
+              echo "[command]Copy core tf resource files for build"
+              Copy-Item -Path ./${{ parameters.resource_folder }}/*.tf -Destination ./
+
+              echo "[command]Create plan directory for tfplan files"
+              mkdir $(Build.SourcesDirectory)/plans
+
+              for ($i = 0; $i -lt $appFiles.Count; $i++)
+              {
+
+                $appFileName = $appFiles[$i].Basename
+                Write-Host "[command]Tier resources, default naming -->"
+
+                $stateFile = -join($appFileName, ".tfstate")
+                $variableFile = -join($appFileName, ".tfvars")
+                $tfPlanName = -join($appFileName, "_plan.tfplan")
+                
+                echo "[command]Creating Terraform Plan for: $stateFile"
+
+                echo "[command]Initialize Terraform instance"
+                ./terraform.exe init -force-copy -backend-config="key=$stateFile"
+                
+                echo "[command]Run Terraform plan against Terraform instance and output plan file: $tfPlanName"
+                ./terraform.exe plan -var environment=${{ parameters.environment }} `
+                  -var virtual_network=$env:${{ parameters.vnet_env }} `
+                  -var virtual_network_rg=$env:${{ parameters.vnet_rg_env }} `
+                  -var rt_id=$env:${{ parameters.rt_id_env }} `
+                  -var-file="./variable_inputs/$variableFile" -out="$tfPlanName"
+
+                echo "[command]Store plan file for reference later: $tfPlanName"
+                Copy-Item -Path ./$tfPlanName -Destination $(Build.SourcesDirectory)/plans
+                
+
+                echo "[warning]Clean up resources after build:"
+                Remove-Item ./*.tfplan -Force
+                Remove-Item .terraform/modules/* -Force
+
+                echo "[warning]Move state file for output reference later"
+                Move-Item -Path ./.terraform/terraform.tfstate -Destination ./plans/$stateFile
+
+                Get-ChildItem * -Include terraform.tfstate -Recurse | Remove-Item -Force
+              }
+            displayName: "Create Terraform Plan for ${{ variables.appIdName }} Tiers"
+
+          # Cleanup
+          - powershell: |
+              Remove-Item ./${{ variables.appIdName }}*.tf
+            displayName: "Remove ${{ variables.appIdName }}.tf Files"
+          - task: DeleteFiles@1
+            inputs:
+              sourceFolder: $(Build.SourcesDirectory)
+              contents: "${{ parameters.backend}}"
+            displayName: "Remove backend files"
+          - task: DeleteFiles@1
+            inputs:
+              sourceFolder: $(Build.SourcesDirectory)
+              contents: "${{ parameters.sp_cred}}"
+            displayName: "Remove service principal credentials"
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathtoPublish: $(Build.SourcesDirectory)
+              artifactname: "${{ variables.appIdName }}"
+          - task: DeleteFiles@1
+            inputs:
+              sourceFolder: $(Build.SourcesDirectory)
+              contents: "${{ variables.appIdName }}*$(plan_file_mnemonic)"
+            displayName: "Remove ${{ variables.appIdName }}*$(plan_file_mnemonic) Files"
+          - powershell: Remove-Item ./.terraform -Recurse -Force
+            displayName: "clean .terraform directory"
